@@ -1,0 +1,117 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // this uses workspaceFolder as the cwd
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+        },
+        {
+            "name": "Python Debugger: Current File pickCwd",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${input:pickCwd}"
+        },
+        {
+            "name": "Python Debugger: Current File enterCwd",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${input:enterCwd}"
+        },
+        {
+            // same as running `python -m subdir.module`. note when using this manually, we don't include the `.py` extension
+            "name": "Python: module",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "subProcess": true,
+            "module": "${command:extension.commandvariable.file.relativeFileDotsNoExtension}",
+            "cwd":"${workspaceFolder}"
+        },
+        {
+            // same as running `python -m subdir.module`. note when using this manually, we don't include the `.py` extension
+            "name": "Python: module with utf 8",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "subProcess": true,
+            "module": "${command:extension.commandvariable.file.relativeFileDotsNoExtension}",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONUTF8": "1"
+            }
+        },
+        {
+            "name": "Python: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "${fileBasenameNoExtension}:app", // replace 'app' with your FastAPI application instance
+                "--reload",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "80"
+            ],
+            "jinja": true
+        },
+        {
+            "name": "Python Debugger: FastAPI pickCwd",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "${fileBasenameNoExtension}:app",
+                "--reload",
+                "--host",
+                "localhost",
+                "--port",
+                "8000"
+            ],
+            "jinja": true,
+            "cwd": "${input:pickCwd}"
+        },
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args":  "${command:pickArgs}"
+            
+        },
+    ],
+    "inputs": [
+        {
+            "id": "enterCwd",
+            "type": "promptString",
+            "description": "Enter the current working directory",
+            "default": "${fileDirname}"
+        },
+        {
+            "id": "pickCwd",
+            "type": "pickString",
+            "description": "Select the current working directory",
+            "options": [
+                "${workspaceFolder}",
+                "${fileDirname}",
+                // "${workspaceFolder}/src",
+            ],
+            "default": "${fileDirname}"
+        }
+    ]
+}
