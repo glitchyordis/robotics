@@ -2,14 +2,14 @@
 <robot name="robotiq_hande" xmlns:xacro="http://ros.org/wiki/xacro">
   <link name="hande_base" />
   
-  <xacro:include filename="robotiq_hande_description/urdf/robotiq_hande_gripper.xacro" />
+  <xacro:include filename="src/robotiq_hande_description/urdf/robotiq_hande_gripper.xacro" />
   
   <!-- <xacro:robotiq_hande_gripper name="robotiq_hande" prefix="" parent="hande_base" /> -->
 
     <xacro:robotiq_hande_gripper
-        name="robotiq_hande_gripper"
-        prefix=""
-        parent="tool0"
+      name="robotiq_hande_gripper"
+      prefix=""
+      parent="hande_base"
         grip_pos_min="0.0"
         grip_pos_max="0.025"
         tty_port="/tmp/ttyUR"
