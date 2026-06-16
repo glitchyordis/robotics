@@ -12,6 +12,9 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": false,
+            "env": {
+                "PYTHONUTF8": "1"
+            },
         },
         {
             "name": "Python Debugger: Current File pickCwd",
