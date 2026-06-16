@@ -21,11 +21,14 @@ EE_SITE_NAME = "attachment_site"
 # Two robots placed side by side (offset along y) and inclined ~45 degrees.
 ROBOT_PREFIXES = ("left_", "right_")
 ROBOT_OFFSETS = (
-    np.array([0.0, 0.45, 0.0], dtype=np.float64),
-    np.array([0.0, -0.45, 0.0], dtype=np.float64),
+    np.array([0.0, 124.3104*1e-3/2, 0.0], dtype=np.float64),
+    np.array([0.0, -124.3104*1e-3/2, 0.0], dtype=np.float64),
 )
 INCLINE_DEG = (-45.0, 45.0)
 INCLINE_AXIS = np.array([1, 0, 0.0], dtype=np.float64)
+# Extra rotation about each robot's own z axis, applied after the incline.
+YAW_DEG = (0.0, -180.0)
+YAW_AXIS = np.array([0.0, 0.0, 1.0], dtype=np.float64)
 HOME_QPOS = np.array(
     [-1.5708, -1.5708, 1.5708, -1.5708, -1.5708, 0.0], dtype=np.float64
 )
@@ -50,6 +53,12 @@ def axis_angle_quat(axis: np.ndarray, angle_rad: float) -> np.ndarray:
     axis = axis / np.linalg.norm(axis)
     half = angle_rad / 2.0
     return np.array([np.cos(half), *(np.sin(half) * axis)], dtype=np.float64)
+
+
+def quat_mul(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    result = np.zeros(4, dtype=np.float64)
+    mujoco.mju_mulQuat(result, q1, q2)
+    return result
 
 
 def add_capsule_marker(scene, start, end, radius, rgba):
@@ -116,12 +125,17 @@ world_spec = mujoco.MjSpec.from_string(
 """
 )
 
-for prefix, offset, incline_deg in zip(ROBOT_PREFIXES, ROBOT_OFFSETS, INCLINE_DEG):
+for prefix, offset, incline_deg, yaw_deg in zip(
+    ROBOT_PREFIXES, ROBOT_OFFSETS, INCLINE_DEG, YAW_DEG
+):
     robot_spec = mujoco.MjSpec.from_file(str(mjcf_path))
     robot_base = robot_spec.worldbody.first_body()
     frame = world_spec.worldbody.add_frame()
     frame.pos = offset
-    frame.quat = axis_angle_quat(INCLINE_AXIS, np.deg2rad(incline_deg))
+    incline_quat = axis_angle_quat(INCLINE_AXIS, np.deg2rad(incline_deg))
+    yaw_quat = axis_angle_quat(YAW_AXIS, np.deg2rad(yaw_deg))
+    # Post-multiply so the yaw is about the robot's own (local) z axis.
+    frame.quat = quat_mul(incline_quat, yaw_quat)
     frame.attach_body(robot_base, prefix, "")
 
 model = world_spec.compile()
