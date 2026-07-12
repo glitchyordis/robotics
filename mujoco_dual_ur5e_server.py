@@ -1,5 +1,7 @@
 """Dual UR5e MuJoCo server / visualizer with two-way FastAPI communication.
 
+see docs/dual_ur5e_server.md documentation for details.
+
 Based on ``mujoco_dual_ur5e.py``. The MuJoCo simulation and (optionally) the
 passive viewer run on the main thread, while a FastAPI app served by uvicorn
 runs in a background daemon thread.
@@ -33,7 +35,6 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import mujoco
 import mujoco.viewer
 import numpy as np
 import uvicorn
@@ -42,6 +43,8 @@ from loop_rate_limiters import RateLimiter
 from PIL import Image
 from pydantic import BaseModel, Field
 from robot_descriptions import ur5e_mj_description
+
+import mujoco
 
 BASE_BODY_NAME = "base"
 EE_SITE_NAME = "attachment_site"
