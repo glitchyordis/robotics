@@ -7,6 +7,9 @@ end-effector poses, optional camera frames) over a WebSocket.
 
 - Server / visualizer: [mujoco_dual_ur5e_server.py](../mujoco_dual_ur5e_server.py)
 - Demo client: [mujoco_dual_ur5e_client.py](../mujoco_dual_ur5e_client.py)
+- IK clients: [sync](../mujoco_dual_ur5e_ik_client_sync.py),
+  [async](../mujoco_dual_ur5e_ik_client_async.py),
+  [dual-arm](../mujoco_dual_ur5e_ik_client_dual.py)
 - Scene source it is based on: [mujoco_dual_ur5e.py](../mujoco_dual_ur5e.py)
 
 ---
@@ -292,6 +295,76 @@ python mujoco_dual_ur5e_client.py --host 127.0.0.1 --port 8123 --duration 10 --c
 | `--port`     | `8000`      | Server port.                                        |
 | `--duration` | `15`        | Seconds to run the sinusoidal demo.                 |
 | `--camera`   | off         | Enable camera streaming and save the first frame.   |
+
+---
+
+## Inverse kinematics (Cartesian targets)
+
+The server only understands **joint angles** — it has no IK built in. To command a Cartesian
+end-effector pose, run an IK solver in the *client* (pink / pinocchio, as in
+[mujoco_pink_ur5e_inverse_kinematics.py](../mujoco_pink_ur5e_inverse_kinematics.py)) and POST
+the resulting joint angles to `/command` (or `/command/batch`). The only change versus the
+UDP reference script is the transport: `sender.sendto(...)` becomes an HTTP `POST`.
+
+Key points:
+
+- **IK runs against a single-arm UR5e at the origin.** The server already bakes each arm's
+  mounting transform into the scene, so a single-arm joint solution maps directly onto
+  `left` or `right`. Express the target pose in that arm's **base frame** (what `set_target_0`
+  does via `X_W_B`).
+- **Joint order matches.** `configuration.q` is
+  `[shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3]`, exactly what `positions`
+  expects.
+- **Async is optional.** You only need `asyncio` if you want to stream state back *while*
+  solving. For pure command-sending, the synchronous client is simpler.
+
+Three ready-to-run clients are provided:
+
+| Script                                                                  | Style        | Sends to         | Use when                                             |
+| ----------------------------------------------------------------------- | ------------ | ---------------- | ---------------------------------------------------- |
+| [mujoco_dual_ur5e_ik_client_sync.py](../mujoco_dual_ur5e_ik_client_sync.py)   | synchronous  | `/command`       | Simplest: blocking solve loop, one arm.              |
+| [mujoco_dual_ur5e_ik_client_async.py](../mujoco_dual_ur5e_ik_client_async.py) | asyncio      | `/command`       | Stream state back while driving one arm.             |
+| [mujoco_dual_ur5e_ik_client_dual.py](../mujoco_dual_ur5e_ik_client_dual.py)   | asyncio      | `/command/batch` | Solve **both** arms each tick, one batched request.  |
+
+```pwsh
+conda activate d:\coding\envs\pink
+
+# One arm, blocking loop
+python mujoco_dual_ur5e_ik_client_sync.py --robot left --z-offset -0.5
+
+# One arm, stream state back while solving
+python mujoco_dual_ur5e_ik_client_async.py --robot right --z-offset -0.4
+
+# Both arms simultaneously, independent targets
+python mujoco_dual_ur5e_ik_client_dual.py --left-z -0.5 --right-z -0.3
+```
+
+| Flag                  | Scripts            | Default     | Description                                        |
+| --------------------- | ------------------ | ----------- | -------------------------------------------------- |
+| `--host`              | all                | `127.0.0.1` | Server host.                                       |
+| `--port`              | all                | `8000`      | Server port.                                       |
+| `--robot {left,right}`| sync, async        | `left`      | Which arm to drive.                                |
+| `--z-offset`          | sync, async        | `-0.5`      | EE target height (m) in the arm's base frame.      |
+| `--left-z` / `--right-z` | dual            | `-0.5`      | Per-arm EE target heights (m) in each base frame.  |
+| `--max-seconds`       | all                | `20`        | Safety timeout for the solve loop.                 |
+
+Minimal synchronous example (the core swap from UDP to REST):
+
+```python
+import httpx
+from pink import solve_ik
+
+with httpx.Client(base_url="http://127.0.0.1:8000", timeout=5.0) as client:
+    while True:
+        velocity = solve_ik(configuration, tasks, dt, solver=solver)
+        configuration.integrate_inplace(velocity, dt)
+        # replaces sender.sendto(pack_state(...), target_addr)
+        client.post("/command", json={"robot": "left",
+                                      "positions": configuration.q.tolist()})
+```
+
+> In **physics** mode (`--physics`) the arm chases the IK iterates with real dynamics, so the
+> displayed pose lags the solver slightly; in **kinematic** mode it tracks each iterate exactly.
 
 ---
 
