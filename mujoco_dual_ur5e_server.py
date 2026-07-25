@@ -54,8 +54,8 @@ DOF_PER_ROBOT = 6
 ROBOT_PREFIXES = ("left_", "right_")
 HOME_QPOS = np.array([0, 0, 0, 0, 0, 0.0], dtype=np.float64)
 ROBOT_OFFSETS = (
-    np.array([0.0, 124.3104 * 1e-3 / 2, 0.0], dtype=np.float64),
-    np.array([0.0, -124.3104 * 1e-3 / 2, 0.0], dtype=np.float64),
+    np.array([0.0, 124.3104 * 1e-3 / 2, 1], dtype=np.float64),
+    np.array([0.0, -124.3104 * 1e-3 / 2, 1], dtype=np.float64),
 )
 INCLINE_DEG = (-45, 45)
 INCLINE_AXIS = np.array([1, 0, 0.0], dtype=np.float64)
@@ -231,7 +231,11 @@ def draw_site_label(scene, data, site_id, label: str, label_offset=LABEL_OFFSET)
 # Scene assembly (copied / adapted from mujoco_dual_ur5e.py).
 # --------------------------------------------------------------------------- #
 def build_model() -> mujoco.MjModel:
-    """Compose a scene holding two prefixed UR5e robots."""
+    """Compose a scene holding two prefixed UR5e robots.
+    
+    cylinder: size[r, half lenght]
+    cylinder_pos = ideal cylinder head start pos, (e.g. tcp[z]) + half_length
+    """
     mjcf_path = Path(ur5e_mj_description.MJCF_PATH)
     world_spec = mujoco.MjSpec.from_string(
         """
@@ -240,6 +244,7 @@ def build_model() -> mujoco.MjModel:
     <worldbody>
         <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1"/>
         <geom type="plane" size="2 2 0.1" rgba=".9 .9 .9 1"/>
+        <geom type="cylinder" size="0.03 0.05" pos="0.8205182754378367 0.1318120808721239 0.7001129577397678" euler="0 1.57 0" rgba="0.8 0.3 0.3 1"/>
     </worldbody>
 </mujoco>
 """
