@@ -17,6 +17,8 @@ Run::
     python mujoco_dual_ur5e_server.py --camera        # enable offscreen render
     python mujoco_dual_ur5e_server.py --physics       # dynamics via mj_step
 
+Show or hide the joint controls at runtime with ``POST /sliders``.
+
 Verifiable cobot position:
 {
   "left": [0.82,-1.85,-1.25,-2.23,1.08,-2.16],
@@ -284,7 +286,7 @@ def build_model() -> mujoco.MjModel:
 class SimState:
     """Thread-safe bridge between the simulation loop and the web server."""
 
-    def __init__(self):
+    def __init__(self, sliders_available: bool = True):
         self._lock = threading.Lock()
 
         # Pending per-robot joint commands keyed by robot name; consumed by sim.
@@ -297,6 +299,9 @@ class SimState:
         # Camera scaffold.
         self._camera_enabled = False
         self._latest_frame_jpeg: Optional[bytes] = None
+
+        self._sliders_available = sliders_available
+        self._sliders_enabled = False
         self.shutdown = threading.Event()
 
     # -- command side (written by web server, read by sim) ------------------ #
@@ -344,6 +349,20 @@ class SimState:
         with self._lock:
             return self._latest_frame_jpeg
 
+    # -- manual joint controls --------------------------------------------- #
+    def set_sliders_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._sliders_enabled = enabled and self._sliders_available
+
+    @property
+    def sliders_enabled(self) -> bool:
+        with self._lock:
+            return self._sliders_enabled
+
+    @property
+    def sliders_available(self) -> bool:
+        return self._sliders_available
+
 
 def _validate_positions(positions: list[float]):
     if len(positions) != DOF_PER_ROBOT:
@@ -368,6 +387,10 @@ class BatchCommand(BaseModel):
 
 
 class CameraToggle(BaseModel):
+    enabled: bool
+
+
+class SliderToggle(BaseModel):
     enabled: bool
 
 
@@ -415,6 +438,23 @@ def create_app(state: SimState) -> FastAPI:
     def post_camera(toggle: CameraToggle):
         state.set_camera_enabled(toggle.enabled)
         return {"status": "ok", "camera_enabled": toggle.enabled}
+
+    @app.get("/sliders")
+    def get_sliders() -> dict:
+        return {
+            "available": state.sliders_available,
+            "enabled": state.sliders_enabled,
+        }
+
+    @app.post("/sliders")
+    def post_sliders(toggle: SliderToggle) -> dict:
+        if toggle.enabled and not state.sliders_available:
+            raise HTTPException(
+                status_code=409,
+                detail="Joint sliders are unavailable in headless mode.",
+            )
+        state.set_sliders_enabled(toggle.enabled)
+        return {"status": "ok", "enabled": state.sliders_enabled}
 
     @app.get("/camera/frame")
     def get_camera_frame() -> dict:
@@ -706,6 +746,247 @@ class Simulation:
             self._renderer.close()
             self._renderer = None
 
+class ManualJointPanel:
+    """Joint sliders and numeric inputs for passive-viewer operation."""
+
+    def __init__(self, sim: Simulation, state: SimState):
+        import tkinter as tk
+
+        self._tk = tk
+        self._sim = sim
+        self._state = state
+        self._root = tk.Tk()
+        self._root.title("Dual UR5e Joint Control")
+        self._root.protocol("WM_DELETE_WINDOW", self.close)
+        self._closed = False
+        self._updating_unit = False
+        self._controls = []
+        self._scale_vars = {}
+        self._active_dofs = set()
+        
+        self._targets = {
+            prefix.rstrip("_"): sim.data.qpos[
+                robot_index * DOF_PER_ROBOT : (robot_index + 1) * DOF_PER_ROBOT
+            ].copy()
+            for robot_index, prefix in enumerate(ROBOT_PREFIXES)
+        }
+
+        self._unit = tk.StringVar(value="rad")
+        unit_frame = tk.Frame(self._root)
+        unit_frame.grid(row=0, column=0, columnspan=2, pady=(8, 0))
+        tk.Label(unit_frame, text="Angle unit:").pack(side=tk.LEFT, padx=(0, 6))
+        tk.Radiobutton(
+            unit_frame,
+            text="Radians",
+            variable=self._unit,
+            value="rad",
+            command=self._unit_changed,
+        ).pack(side=tk.LEFT)
+        tk.Radiobutton(
+            unit_frame,
+            text="Degrees",
+            variable=self._unit,
+            value="deg",
+            command=self._unit_changed,
+        ).pack(side=tk.LEFT)
+        self._unit_label = tk.StringVar(value="Angle (rad)")
+
+        for robot_index, prefix in enumerate(ROBOT_PREFIXES):
+            robot_name = prefix.rstrip("_")
+            frame = tk.LabelFrame(
+                self._root,
+                text=robot_name.capitalize(),
+                padx=8,
+                pady=8,
+            )
+            frame.grid(row=1, column=robot_index, padx=8, pady=8, sticky="n")
+
+            tk.Label(frame, textvariable=self._unit_label).grid(
+                row=0, column=1, padx=(8, 0), sticky="w"
+            )
+
+            lo = robot_index * DOF_PER_ROBOT
+            for joint_index in range(DOF_PER_ROBOT):
+                qpos_index = lo + joint_index
+                joint = sim.model.joint(qpos_index)
+                if sim.model.jnt_limited[joint.id]:
+                    lower, upper = sim.model.jnt_range[joint.id]
+                else:
+                    lower, upper = -2.0 * np.pi, 2.0 * np.pi
+
+                label = joint.name.removeprefix(prefix).removesuffix("_joint")
+                scale_var = tk.DoubleVar(value=float(sim.data.qpos[qpos_index]))
+                scale = tk.Scale(
+                    frame,
+                    label=label,
+                    from_=float(lower),
+                    to=float(upper),
+                    resolution=0.01,
+                    orient=tk.HORIZONTAL,
+                    length=300,
+                    variable=scale_var,
+                )
+                scale.grid(row=joint_index + 1, column=0, sticky="ew")
+                scale.bind(
+                    "<ButtonPress-1>",
+                    lambda _event, key=(robot_name, joint_index):
+                    self._active_dofs.add(key),
+                )
+                scale.bind(
+                    "<ButtonRelease-1>",
+                    lambda _event, key=(robot_name, joint_index):
+                    self._active_dofs.discard(key),
+                )
+                self._scale_vars[(robot_name, joint_index)] = scale_var
+
+                angle_var = tk.StringVar(value=f"{sim.data.qpos[qpos_index]:.4f}")
+                entry = tk.Entry(frame, textvariable=angle_var, width=10)
+                entry.grid(
+                    row=joint_index + 1,
+                    column=1,
+                    padx=(8, 0),
+                    sticky="w",
+                )
+                def commit(
+                    _event,
+                    slider=scale,
+                    variable=angle_var,
+                    name=robot_name,
+                    index=joint_index,
+                ):
+                    self._commit_entry(slider, variable, name, index)
+
+                entry.bind("<Return>", commit)
+                entry.bind("<FocusOut>", commit)
+
+                scale.configure(
+                    command=lambda value,
+                    name=robot_name,
+                    index=joint_index,
+                    variable=angle_var: self._slider_changed(
+                        name, index, value, variable
+                    )
+                )
+                self._controls.append(
+                    (
+                        scale,
+                        angle_var,
+                        robot_name,
+                        joint_index,
+                        float(lower),
+                        float(upper),
+                    )
+                )
+
+    def _to_display(self, radians: float) -> float:
+        if self._unit.get() == "deg":
+            return float(np.rad2deg(radians))
+        return radians
+
+    def _to_radians(self, displayed_value: float) -> float:
+        if self._unit.get() == "deg":
+            return float(np.deg2rad(displayed_value))
+        return displayed_value
+
+    def _format_angle(self, value: float) -> str:
+        precision = 2 if self._unit.get() == "deg" else 4
+        return f"{value:.{precision}f}"
+
+    def _unit_changed(self) -> None:
+        self._updating_unit = True
+        try:
+            suffix = "deg" if self._unit.get() == "deg" else "rad"
+            self._unit_label.set(f"Angle ({suffix})")
+            resolution = 0.1 if suffix == "deg" else 0.01
+            for scale, angle_var, robot_name, joint_index, lower, upper in (
+                self._controls
+            ):
+                displayed_value = self._to_display(
+                    float(self._targets[robot_name][joint_index])
+                )
+                scale.configure(
+                    from_=self._to_display(lower),
+                    to=self._to_display(upper),
+                    resolution=resolution,
+                )
+                self._scale_vars[(robot_name, joint_index)].set(displayed_value)
+                angle_var.set(self._format_angle(displayed_value))
+        finally:
+            self._updating_unit = False
+
+    def _slider_changed(
+        self, robot_name: str, joint_index: int, value: str, angle_var
+    ) -> None:
+        displayed_value = float(value)
+        angle_var.set(self._format_angle(displayed_value))
+        if (
+            not self._updating_unit
+            and (robot_name, joint_index) in self._active_dofs
+        ):
+            self._queue_joint(
+                robot_name, joint_index, self._to_radians(displayed_value)
+            )
+
+    def _commit_entry(
+        self, scale, angle_var, robot_name: str, joint_index: int
+    ) -> None:
+        try:
+            value = float(angle_var.get())
+        except ValueError:
+            angle_var.set(self._format_angle(float(scale.get())))
+            return
+
+        value = min(max(value, float(scale.cget("from"))), float(scale.cget("to")))
+        self._scale_vars[(robot_name, joint_index)].set(value)
+        angle_var.set(self._format_angle(value))
+        self._queue_joint(robot_name, joint_index, self._to_radians(value))
+
+    def _queue_joint(self, robot_name: str, joint_index: int, value: float) -> None:
+        self._targets[robot_name][joint_index] = float(value)
+        self._state.queue_command(robot_name, self._targets[robot_name])
+
+    def update(self) -> None:
+        if self._closed:
+            return
+        try:
+            robots = self._state.get_snapshot().get("robots", {})
+            self._updating_unit = True
+            try:
+                for scale, angle_var, robot_name, joint_index, _lower, _upper in (
+                    self._controls
+                ):
+                    control_key = (robot_name, joint_index)
+                    if control_key in self._active_dofs:
+                        continue
+                    positions = robots.get(robot_name, {}).get("positions")
+                    if positions is None:
+                        continue
+                    target = float(positions[joint_index])
+                    if abs(float(self._targets[robot_name][joint_index]) - target) <= 1e-9:
+                        continue
+                    self._targets[robot_name][joint_index] = target
+                    displayed_value = self._to_display(target)
+                    self._scale_vars[control_key].set(displayed_value)
+                    angle_var.set(self._format_angle(displayed_value))
+            finally:
+                self._updating_unit = False
+            self._root.update_idletasks()
+            self._root.update()
+        except self._tk.TclError:
+            self._closed = True
+            self._state.set_sliders_enabled(False)
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._state.set_sliders_enabled(False)
+        self._root.destroy()
+
 
 def run_windowed(sim: Simulation, state: SimState) -> None:
     """
@@ -715,33 +996,46 @@ def run_windowed(sim: Simulation, state: SimState) -> None:
         viewer.sync()
     """
     rate = RateLimiter(frequency=200.0, warn=False)
-    with (
-        mujoco.viewer.launch_passive(
-            model=sim.model,  # fixed structure of the robot/world.
-            data=sim.data,  # changing runtime state: joint positions, body poses, site poses, velocities, contacts, etc.
-            show_left_ui=False,
-            show_right_ui=False,
-        ) as viewer
-    ):
-        # sets the viewer camera to MuJoCo’s default free camera.
-        # In plain terms: it gives the window a reasonable initial camera view.
-        mujoco.mjv_defaultFreeCamera(sim.model, viewer.cam)
+    joint_panel: ManualJointPanel | None = None
+    try:
+        with (
+            mujoco.viewer.launch_passive(
+                model=sim.model,  # fixed structure of the robot/world.
+                data=sim.data,  # changing runtime state: joint positions, body poses, site poses, velocities, contacts, etc.
+                show_left_ui=False,
+                show_right_ui=False,
+            ) as viewer
+        ):
+            # sets the viewer camera to MuJoCo’s default free camera.
+            # In plain terms: it gives the window a reasonable initial camera view.
+            mujoco.mjv_defaultFreeCamera(sim.model, viewer.cam)
 
-        while viewer.is_running() and not state.shutdown.is_set():
-            sim.step()
-            with viewer.lock():
-                # the viewer has its own internal rendering thread/state. Lock it before changing viewer
-                # drawing data so you do not modify the scene while the viewer is rendering.
-                # draws your extra visual markers into the viewer.
-                # From your code, that includes things like:
-                # world axes
-                # robot base axes
-                # end-effector/site axes
-                # TCP labels
-                # These are not physical MuJoCo objects. They are temporary viewer decorations.
-                sim.draw(viewer.user_scn)
-            viewer.sync()
-            rate.sleep()
+            while viewer.is_running() and not state.shutdown.is_set():
+                sim.step()
+                if state.sliders_enabled:
+                    if joint_panel is None or joint_panel.closed:
+                        joint_panel = ManualJointPanel(sim, state)
+                    joint_panel.update()
+                elif joint_panel is not None:
+                    joint_panel.close()
+                    joint_panel = None
+                    
+                with viewer.lock():
+                    # the viewer has its own internal rendering thread/state. Lock it before changing viewer
+                    # drawing data so you do not modify the scene while the viewer is rendering.
+                    # draws your extra visual markers into the viewer.
+                    # From your code, that includes things like:
+                    # world axes
+                    # robot base axes
+                    # end-effector/site axes
+                    # TCP labels
+                    # These are not physical MuJoCo objects. They are temporary viewer decorations.
+                    sim.draw(viewer.user_scn)
+                viewer.sync()
+                rate.sleep()
+    finally:
+        if joint_panel is not None:
+            joint_panel.close()
     state.shutdown.set()
 
 
@@ -772,7 +1066,7 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="FastAPI bind port.")
     args = parser.parse_args()
 
-    state = SimState()
+    state = SimState(sliders_available=not args.headless)
     sim = Simulation(state, enable_camera=args.camera, enable_physics=args.physics)
 
     app = create_app(state)
