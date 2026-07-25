@@ -52,6 +52,7 @@ def build_configuration(robot) -> pink.Configuration:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronous IK client.")
+    parser.add_argument("--post-joint", action="store_true", help="POST joint pose to server.")
     parser.add_argument("--host", default="127.0.0.1", help="Server host.")
     parser.add_argument("--port", type=int, default=8000, help="Server port.")
     parser.add_argument(
@@ -68,6 +69,11 @@ def main() -> None:
         type=float,
         default=20.0,
         help="Safety timeout for the solve loop.",
+    )
+    parser.add_argument(
+        "--final-only",
+        action="store_true",
+        help="Solve locally and send only the final joint positions once converged.",
     )
     args = parser.parse_args()
 
@@ -104,18 +110,13 @@ def main() -> None:
     base_url = f"http://{args.host}:{args.port}"
     ok_count = 0
     elapsed = 0.0
-
+    target_printed = False
+    
     with httpx.Client(base_url=base_url, timeout=5.0) as client:
         print(f"[ik-sync] Driving '{args.robot}' on {base_url}")
         while elapsed < args.max_seconds:
             velocity = solve_ik(configuration, tasks, dt, solver=solver)
             configuration.integrate_inplace(velocity, dt)
-
-            # Send the freshly solved joint angles (replaces the old UDP send).
-            client.post(
-                "/command",
-                json={"robot": args.robot, "positions": configuration.q.tolist()},
-            )
 
             current_pose = configuration.get_transform_frame_to_world("tool0")
             target_pose = ee_task.transform_target_to_world
@@ -123,6 +124,13 @@ def main() -> None:
             rot_err = np.linalg.norm(
                 pin.log3(target_pose.rotation.T @ current_pose.rotation)
             )
+            
+            if not target_printed:
+                print(
+                    f"[ik-sync] Target pose: {target_pose.translation},\n"
+                    f"orientation:\n{target_pose.rotation}"
+                )
+                target_printed = True
 
             ok_count = ok_count + 1 if (pos_err < pos_tol and rot_err < rot_tol) else 0
             if ok_count >= stable_steps:
@@ -130,7 +138,26 @@ def main() -> None:
                     f"[ik-sync] Target reached. "
                     f"pos_err={pos_err:.6f} m, rot_err={rot_err:.6f} rad"
                 )
+                if args.post_joint:
+                    # Send final joint angles to the server.
+                    client.post(
+                        "/command",
+                        json={
+                            "robot": args.robot,
+                            "positions": configuration.q.tolist(),
+                        },
+                    )
                 break
+
+            if not args.final_only and args.post_joint:
+                # Stream intermediate joint angles to the server.
+                client.post(
+                    "/command",
+                    json={
+                        "robot": args.robot,
+                        "positions": configuration.q.tolist(),
+                    },
+                )
 
             rate.sleep()
             elapsed += dt
