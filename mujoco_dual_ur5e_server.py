@@ -201,6 +201,31 @@ def draw_world_axes(scene, axis_length=AXIS_LENGTH):
     )
 
 
+def draw_more_axes(scene, data, ee_site_ids: list):
+    T_gripper_cam = np.array(
+        [
+            [-9.96578317e-03, -9.99947544e-01, 2.36465519e-03, -1.01382954e-03],
+            [9.79792496e-01, -1.02372871e-02, -1.99754508e-01, 5.68839815e-02],
+            [1.99768237e-01, 3.26161300e-04, 9.79843123e-01, 1.58847692e-01],
+            [0.00000000e00, 0.00000000e00, 0.00000000e00, 1.00000000e00],
+        ]
+    )
+
+    right_robot_index = ROBOT_PREFIXES.index("right_")
+    right_ee_site_id = ee_site_ids[right_robot_index]
+
+    T_world_gripper = np.eye(4, dtype=np.float64)
+    T_world_gripper[:3, :3] = data.site_xmat[right_ee_site_id].reshape(3, 3)
+    T_world_gripper[:3, 3] = data.site_xpos[right_ee_site_id]
+
+    T_world_cam = T_world_gripper @ T_gripper_cam
+    draw_frame_axes(
+        scene,
+        T_world_cam[:3, 3],
+        T_world_cam[:3, :3],
+    )
+
+
 def draw_site_axes(scene, data, site_id, axis_length=AXIS_LENGTH):
     draw_frame_axes(
         scene, data.site_xpos[site_id], data.site_xmat[site_id], axis_length
@@ -234,7 +259,7 @@ def draw_site_label(scene, data, site_id, label: str, label_offset=LABEL_OFFSET)
 # --------------------------------------------------------------------------- #
 def build_model() -> mujoco.MjModel:
     """Compose a scene holding two prefixed UR5e robots.
-    
+
     cylinder: size[r, half lenght]
     cylinder_pos = ideal cylinder head start pos, (e.g. tcp[z]) + half_length
     """
@@ -740,11 +765,13 @@ class Simulation:
                 ee_site_id,
                 f"{ROBOT_PREFIXES[robot_index].rstrip('_')} tcp",
             )
+            draw_more_axes(scene, self.data, self.ee_site_ids)
 
     def close(self) -> None:
         if self._renderer is not None:
             self._renderer.close()
             self._renderer = None
+
 
 class ManualJointPanel:
     """Joint sliders and numeric inputs for passive-viewer operation."""
@@ -763,7 +790,7 @@ class ManualJointPanel:
         self._controls = []
         self._scale_vars = {}
         self._active_dofs = set()
-        
+
         self._targets = {
             prefix.rstrip("_"): sim.data.qpos[
                 robot_index * DOF_PER_ROBOT : (robot_index + 1) * DOF_PER_ROBOT
@@ -829,13 +856,15 @@ class ManualJointPanel:
                 scale.grid(row=joint_index + 1, column=0, sticky="ew")
                 scale.bind(
                     "<ButtonPress-1>",
-                    lambda _event, key=(robot_name, joint_index):
-                    self._active_dofs.add(key),
+                    lambda _event, key=(robot_name, joint_index): self._active_dofs.add(
+                        key
+                    ),
                 )
                 scale.bind(
                     "<ButtonRelease-1>",
-                    lambda _event, key=(robot_name, joint_index):
-                    self._active_dofs.discard(key),
+                    lambda _event, key=(robot_name, joint_index): (
+                        self._active_dofs.discard(key)
+                    ),
                 )
                 self._scale_vars[(robot_name, joint_index)] = scale_var
 
@@ -847,6 +876,7 @@ class ManualJointPanel:
                     padx=(8, 0),
                     sticky="w",
                 )
+
                 def commit(
                     _event,
                     slider=scale,
@@ -860,11 +890,8 @@ class ManualJointPanel:
                 entry.bind("<FocusOut>", commit)
 
                 scale.configure(
-                    command=lambda value,
-                    name=robot_name,
-                    index=joint_index,
-                    variable=angle_var: self._slider_changed(
-                        name, index, value, variable
+                    command=lambda value, name=robot_name, index=joint_index, variable=angle_var: (
+                        self._slider_changed(name, index, value, variable)
                     )
                 )
                 self._controls.append(
@@ -898,9 +925,14 @@ class ManualJointPanel:
             suffix = "deg" if self._unit.get() == "deg" else "rad"
             self._unit_label.set(f"Angle ({suffix})")
             resolution = 0.1 if suffix == "deg" else 0.01
-            for scale, angle_var, robot_name, joint_index, lower, upper in (
-                self._controls
-            ):
+            for (
+                scale,
+                angle_var,
+                robot_name,
+                joint_index,
+                lower,
+                upper,
+            ) in self._controls:
                 displayed_value = self._to_display(
                     float(self._targets[robot_name][joint_index])
                 )
@@ -919,10 +951,7 @@ class ManualJointPanel:
     ) -> None:
         displayed_value = float(value)
         angle_var.set(self._format_angle(displayed_value))
-        if (
-            not self._updating_unit
-            and (robot_name, joint_index) in self._active_dofs
-        ):
+        if not self._updating_unit and (robot_name, joint_index) in self._active_dofs:
             self._queue_joint(
                 robot_name, joint_index, self._to_radians(displayed_value)
             )
@@ -952,9 +981,14 @@ class ManualJointPanel:
             robots = self._state.get_snapshot().get("robots", {})
             self._updating_unit = True
             try:
-                for scale, angle_var, robot_name, joint_index, _lower, _upper in (
-                    self._controls
-                ):
+                for (
+                    scale,
+                    angle_var,
+                    robot_name,
+                    joint_index,
+                    _lower,
+                    _upper,
+                ) in self._controls:
                     control_key = (robot_name, joint_index)
                     if control_key in self._active_dofs:
                         continue
@@ -962,7 +996,10 @@ class ManualJointPanel:
                     if positions is None:
                         continue
                     target = float(positions[joint_index])
-                    if abs(float(self._targets[robot_name][joint_index]) - target) <= 1e-9:
+                    if (
+                        abs(float(self._targets[robot_name][joint_index]) - target)
+                        <= 1e-9
+                    ):
                         continue
                     self._targets[robot_name][joint_index] = target
                     displayed_value = self._to_display(target)
@@ -1019,7 +1056,7 @@ def run_windowed(sim: Simulation, state: SimState) -> None:
                 elif joint_panel is not None:
                     joint_panel.close()
                     joint_panel = None
-                    
+
                 with viewer.lock():
                     # the viewer has its own internal rendering thread/state. Lock it before changing viewer
                     # drawing data so you do not modify the scene while the viewer is rendering.
