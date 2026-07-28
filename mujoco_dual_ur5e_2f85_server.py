@@ -498,7 +498,7 @@ async def _async_sleep(seconds: float) -> None:
 
 
 def create_app(state: SimState) -> FastAPI:
-    app = FastAPI(title="Dual UR5e MuJoCo Server")
+    app = FastAPI(title="MuJoCo Dual UR5e 2f85 Server")
 
     @app.get("/state")
     def get_state() -> dict:
