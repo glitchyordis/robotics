@@ -1,0 +1,31 @@
+info:
+  name: Post Gripper Close
+  type: http
+  seq: 8
+
+http:
+  method: POST
+  url: "{{baseUrl}}/gripper/close"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+
+examples:
+  - name: 200 Response
+    description: Successful Response
+    request:
+      url: "{{baseUrl}}/gripper/close"
+      method: POST
+    response:
+      status: 200
+      statusText: OK
+      headers:
+        - name: Content-Type
+          value: application/json
+      body:
+        type: json
+        data: "{}"
