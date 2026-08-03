@@ -1,9 +1,13 @@
-This repo contains scripts 
-- [TODO](#todo)
-- [Codes](#codes)
+This repo contains scripts for robotics, focusing on transformation (kinematics) and simulation (MuJoCo) with UR5e.
+In each sections, lower entries are more beginner friendly.
 
-## TODO
-- [ ] write a desc. for [generic.ipynb](generic.ipynb), [test_spacemouse](test_spacemouse.py)
+- [Codes](#codes)
+  - [Dual UR5e servers \& clients](#dual-ur5e-servers--clients)
+  - [Sim](#sim)
+  - [Loading UR5e](#loading-ur5e)
+  - [Inverse kinematics](#inverse-kinematics)
+- [TODO](#todo)
+
 
 ## Codes
 
@@ -15,6 +19,10 @@ This repo contains scripts
   - [mujoco_dual_ur5e_ik_client_sync](mujoco_dual_ur5e_ik_client_sync.py) — ik example on single arm
   - [mujoco_dual_ur5e_ik_client_async](mujoco_dual_ur5e_ik_client_async.py) — ik example on single arm, async
   - [mujoco_dual_ur5e_ik_client_dual](mujoco_dual_ur5e_ik_client_dual.py) — async ik on dual arm
+
+### Sim
+
+- [mujoco_load_stl_collision_box](mujoco_load_stl_collision_box.ipynb) - loads an stl file and adds a collision box
 
 ### Loading UR5e
 
@@ -28,3 +36,6 @@ This repo contains scripts
 - [pink_transformations.ipynb](pink_transformations.ipynb) — transformations using pink library
 - [pink_ur5e_inverse_kinematic.ipynb](pink_ur5e_inverse_kinematic.ipynb) — inverse_kin with pink
 - [pinochio_viz_urdf.ipynb](pinochio_viz_urdf.ipynb) — custom util to viz robot loaded with robot_description via pinnochio
+
+## TODO
+- [ ] write a desc. for [generic.ipynb](generic.ipynb), [test_spacemouse](test_spacemouse.py)
