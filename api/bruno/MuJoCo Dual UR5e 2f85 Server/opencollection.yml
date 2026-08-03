@@ -1,0 +1,29 @@
+opencollection: 1.0.0
+
+info:
+  name: MuJoCo Dual UR5e 2f85 Server
+  version: "1"
+config:
+  proxy:
+    inherit: true
+    config:
+      protocol: http
+      hostname: ""
+      port: ""
+      auth:
+        username: ""
+        password: ""
+      bypassProxy: ""
+bundled: false
+extensions:
+  bruno:
+    ignore:
+    - node_modules
+    - .git
+    openapi:
+    - sourceUrl: http://localhost:8000/openapi.json
+      groupBy: tags
+      lastSyncDate: 2026-07-27T12:29:48.425Z
+      specHash: 9a2096697ba650f6c568129232a7902a
+      autoCheck: true
+      autoCheckInterval: 5

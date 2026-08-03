@@ -1,3 +1,5 @@
 *.pyc
+*.env
 
 /_dev
+api/bruno/MuJoCo Dual UR5e 2f85 Server/environments
